@@ -104,6 +104,12 @@ class LinearExpr:
             return next(iter(self.coeffs.keys()))
         raise Exception("constraint doesn't refer to one variable")
 
+    def eval(self, results):
+        constant = self.constant
+        for k, s in self.coeffs.items():
+            constant += results.get(k, 0.0)*s
+        return constant
+
     def subs(self, *ms):
         coeffs  = {}
         constant = self.constant
@@ -178,9 +184,9 @@ class System:
     def results(self):
         self.solve()
         results = {}
-        for k, c in self.Cv:
+        for k, c in self.Cv.items():
             results[k] = c.constant
-        for k, c in self.Cu:
+        for k, c in self.Cu.items():
             results[k] = c.constant
         return results
 
@@ -349,7 +355,7 @@ def eq(expr, strength=None):
         s2 = slack()
         return Constraint(expr + s1 - s2, {strength: s1 + s2}, s1)
 
-def lt(expr, strength=None):
+def le(expr, strength=None):
     if strength is None:
         s1 = slack()
         return Constraint(expr + s1, {}, s1)
@@ -358,7 +364,7 @@ def lt(expr, strength=None):
         s2 = slack()
         return Constraint(expr + s1 - s2, {strength: s2}, s1)
 
-def gt(expr, strength=None):
+def ge(expr, strength=None):
     if strength is None:
         s1 = slack()
         return Constraint(expr - s1, {}, s1)
@@ -366,6 +372,14 @@ def gt(expr, strength=None):
         s1 = slack()
         s2 = slack()
         return Constraint(expr - s1 + s2, {strength: s2}, s1)
+
+def les(expr, strength):
+    s1 = slack()
+    return Constraint(expr + s1, {strength: s1}, s1)
+
+def ges(expr, strength):
+    s1 = slack()
+    return Constraint(expr - s1, {strength: s1}, s1)
 
 def system1():
     xl = flex()
