@@ -177,7 +177,7 @@ class System:
     def discard(self, constraint):
         if constraint in self.constraints:
             _remove_objective_(self.O, constraint.objective)
-            _remove_equation_(self.Cu, self.Cv, Self.O, constraint.marker)
+            _remove_equation_(self.Cu, self.Cv, self.O, constraint.marker)
             self.constraints.discard(constraint)
             self.resolve = True
 
@@ -196,14 +196,14 @@ class System:
             self.resolve = False
 
     def refine(self, fixed):
-        sub = {}
+        subs = {}
         for k, v in fixed.items():
             if k in self.fixed:
                 subs[k] = k - self.fixed[k]
                 self.fixed[k] = LinearExpr(self.fixed[k].coeffs, v)
             else:
                 self.fixed[k] = dummy() + v
-        _subs_(sub, self.Cu, self.Cv, self.O)
+        _subs_(subs, self.Cu, self.Cv, self.O)
         _dual_simplex_(Cu, Cv, O)
 
     def format(self, names):
