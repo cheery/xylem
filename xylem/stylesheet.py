@@ -6,6 +6,7 @@ from .nodes import (
     Dim, Descend, Match, AtEmpty, Adjacent, Anchor, VisualFormat, Many,
     Edge, Space, Cell,
 )
+from .solver import eq, le, ge, les, ges
 
 class Context:
     def __init__(self, selectors, dims, index, expects_selector=False):
@@ -420,7 +421,9 @@ class DeclParser:
                 break
             decls.append(self.parse_declaration())
         self.env_stack = env_stack
-        return Many([d for d in decls if d is not None])
+        if len(decls) == 1:
+            return decls[0]
+        return Many(decls)
 
     # ---- Dim a,b,!c: body -------------------------------------------
     def parse_dim(self):
@@ -441,7 +444,7 @@ class DeclParser:
         # Introduce one Dim per name and parse body once *inside* each Dim scope
         # We parse the body text after ':' once per var (as in your IR).
         
-        env_stack, self.env_stack = self.env_stack, self.env_stack + names
+        env_stack, self.env_stack = self.env_stack, self.env_stack + [n.lstrip('!') for n in names]
         body = self.parse_declaration() #if self.peek() == "{" else self.parse_declaration(env)
         self.env_stack = env_stack
         # Note: The IR Dim(node, slack=bool) wraps a body expecting it to use the arg.
@@ -457,6 +460,8 @@ class DeclParser:
             # but your runtime Dim will inject the arg. Keep parse-time scope as-is,
             # and rely on runtime to wire env (simplifies mutual nesting).
             decls.append(Dim(body, slack=slack))
+        if len(decls) == 1:
+            return decls[0]
         return Many(decls)
 
     # ---- @ … anchors -------------------------------------------------
@@ -476,11 +481,11 @@ class DeclParser:
         self.i = j
 
         # map operator
-        if   rel == "=":  relfn = eval("eq")
-        elif rel == "<=": relfn = eval("le")
-        elif rel == ">=": relfn = eval("ge")
-        elif rel == "<|": relfn = eval("les")
-        elif rel == ">|": relfn = eval("ges")
+        if   rel == "=":  relfn = eq
+        elif rel == "<=": relfn = le
+        elif rel == ">=": relfn = ge
+        elif rel == "<|": relfn = les
+        elif rel == ">|": relfn = ges
         else:
             raise SyntaxError(f"Unknown relation {rel}")
 
@@ -564,7 +569,7 @@ class DeclParser:
     def parse_declaration(self):
         tok = self.peek()
         if tok is None:
-            return None
+            raise SyntaxError(f"Expected a declaration")
 
         if tok == "Dim":
             return self.parse_dim()
@@ -575,13 +580,12 @@ class DeclParser:
         node = self.parse_head_or_vf()
         return node
 
-
 def parse_declarations(source: str):
     tokens = tokenize(source)
     p = DeclParser(tokens, 0, env_stack=[])
     decls = []
     while p.peek() is not None:
         decls.append(p.parse_declaration())
-    return Many([d for d in decls if d is not None])
-
-
+    if len(decls) == 1:
+        return decls[0]
+    return Many(decls)

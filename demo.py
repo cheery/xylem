@@ -27,20 +27,57 @@ root = Node(
 
 system = System({})
 
+# thing 
+# %thing
+# & thing
+# thing thang
+# thing - thang
+# thing | thang
+# *
+# thing :first
+# thing :last
+
+# expr.parameter
+# -expr
+# +expr
+# x-y
+# x+y
+# x*y
+# x/y
+
+# Edge
+# -a-
+# (a)
+
+# H: pattern
+# V: pattern
+
+# Dim x, !y: pattern
+# @n x = y
+# @n x <= y
+# @n x >= y
+# @n x >| y
+# @n x <| y
+# x;y=foo { }
+# x=foo, y=bar { }
+# x { }
+# x :empty { }
+
+
 ruleset = parse_declarations("""
 
 & row {
   x;y=* { H: (x)(y) }
   x=*:first { H: Edge(x) }
   x=*:last  { H: (x)Edge }
-  V: Edge(*)Edge
+  V: Edge-a-(*)-a-Edge
 }
 
 & column {
   x;y=* { V: (x)(y) }
   x=*:first { V: Edge(x) }
   x=*:last  { V: (x)Edge }
-  H: Edge(*)Edge
+  H: Edge-a-(*)-a-Edge
 }
 
 """)

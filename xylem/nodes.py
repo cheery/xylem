@@ -168,7 +168,7 @@ def matcher(hashed, pattern):
 class Number(Expression):
     value : float
     def eval(self, env, root):
-        return promote(self.value)
+        return self.value
 
     def shift(self, f):
         return self
