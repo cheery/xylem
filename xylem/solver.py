@@ -226,7 +226,7 @@ def _insert_equation_(Cu, Cv, c):
             break
     else:
         c = c.positive()
-        while c.constant > 0.0:
+        while not c.is_zero:
             k = min(_entering_variable_(c), key=id, default=None)
             if k is None:
                 raise Exception("unsatisfiable")
@@ -235,7 +235,7 @@ def _insert_equation_(Cu, Cv, c):
             if j is None:
                 _pivot_(Cv, c, k, Cu, Cv)
             else:
-                _pivot_(Cv, remove(Cv,j), k, Cu, Cv)
+                _pivot_(Cv, _remove_(Cv,j), k, Cu, Cv)
             c = c.subs(Cv)
 
 def _entering_variable_(c):
@@ -373,11 +373,15 @@ def ge(expr, strength=None):
         s2 = slack()
         return Constraint(expr - s1 + s2, {strength: s2}, s1)
 
-def les(expr, strength):
+def les(expr, strength=None):
+    if strength is None:
+        return eq(expr)
     s1 = slack()
     return Constraint(expr + s1, {strength: s1}, s1)
 
-def ges(expr, strength):
+def ges(expr, strength=None):
+    if strength is None:
+        return eq(expr)
     s1 = slack()
     return Constraint(expr - s1, {strength: s1}, s1)
 

@@ -1,9 +1,10 @@
 import pygame
 from xylem.solver import *
 from xylem.nodes import *
+from xylem.stylesheet import parse_declarations
 
-width = flex()
-height = flex()
+width = slack()
+height = slack()
 root = Node(
     children=[
         Node(width = promote(4*10), height = promote(4*10)),
@@ -15,46 +16,38 @@ root = Node(
                 Node(width = promote(4*20), height = promote(4*15)),
                 Node(width = promote(4*7),  height = promote(4*25)),
             ],
-            computed_layout='column'
+            tag = 'column',
         ),
     ], 
     left = promote(0),
     top = promote(0),
     width = width,
     height = height,
-    computed_layout='row')
+    tag = 'row')
 
 system = System({})
 
-def layout(system, node):
-    if node.computed_layout == 'row':
-        x = promote(0)
-        top = promote(0)
-        bot = node.height
+ruleset = parse_declarations("""
 
-        for child in node.children:
-            a = slack()
-            system.add(eq(x - child.left))
-            system.add(eq(top - child.top + a))
-            system.add(eq(bot - (child.bottom+a)))
-            x = child.right
-        system.add(eq(x - node.width))
-    if node.computed_layout == 'column':
-        left  = promote(0)
-        right = node.width
-        y     = promote(0)
-        for child in node.children:
-            a = slack()
-            system.add(eq(y - child.top))
-            system.add(eq(left - child.left + a))
-            system.add(eq(right - (child.right+a)))
-            y = child.bottom
-        system.add(eq(y - node.height))
-            
-    for child in node.children:
-        layout(system, child)
+& row {
+  x;y=* { H: (x)(y) }
+  x=*:first { H: Edge(x) }
+  x=*:last  { H: (x)Edge }
+  V: Edge(*)Edge
+}
 
-layout(system, root)
+& column {
+  x;y=* { V: (x)(y) }
+  x=*:first { V: Edge(x) }
+  x=*:last  { V: (x)Edge }
+  H: Edge(*)Edge
+}
+
+""")
+
+ruleset.resolve(system, (), root)
+
+print(system.format(Names({})))
 
 def draw(screen, node, results, x, y):
     x += node.left.eval(results)
