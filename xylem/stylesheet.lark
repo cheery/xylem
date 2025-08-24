@@ -1,0 +1,106 @@
+// -------------------- TOKENS --------------------
+%import common.CNAME   -> IDENT        // identifiers
+%import common.SIGNED_NUMBER -> NUMBER
+%import common.WS
+%ignore WS
+%ignore /#[^\n]*/                   // comments
+
+STRING          : /"[^"]*"|'[^']*'/
+PERCENT_IDENT   : "%" IDENT
+
+// operators
+REL_OP          : "=" | "<=" | ">=" | "<\|" | ">\|"
+
+// -------------------- TOP LEVEL -----------------
+start           : declarations
+                | -> empty
+
+declarations    : declaration
+                | declaration declarations -> prepend
+                | dim_decl
+
+?declaration    : anchor_decl
+                | relation_decl
+                | head_or_vf
+
+// -------------------- DIM -----------------------
+dim_decl        : "Dim" dim_name_list ":" declarations
+dim_name_list   : dim_name ("," dim_name)*
+?dim_name       : bind     -> slack
+                | "!" bind -> flex
+
+// -------------------- ANCHOR --------------------
+?anchor_decl    : "@" expr REL_OP expr        -> anchor_req
+                | "@" NUMBER expr REL_OP expr -> anchor
+
+// -------------------- RELATION ------------
+relation_decl   : IDENT "(" arg_list? ")"
+arg_list        : expr ("," expr)*
+
+// -------------------- HEADS / VF ----------------
+?head_or_vf     : "H" ":" tile*           -> horizontal
+                | "V" ":" tile*           -> vertical
+                | selector ":empty" block -> at_empty
+                | selector block          -> descend
+                | bindings block          -> match
+                | adjacent_decl
+
+?tile           : "Edge"                -> edge
+                | "-" space "-"         -> space
+                | "(" expr ")"          -> cell
+
+?space          : "(" expr ")"
+                | NUMBER   -> number
+                | IDENT    -> spaced_ident
+
+?block          : "{" declarations "}" -> many
+                | "{" "}"              -> empty
+
+bindings        : binding ("," binding)*
+binding         : bind "=" selector
+
+adjacent_decl   : bind ";" bind "=" selector block
+
+bind            : IDENT
+
+// -------------------- SELECTORS -----------------
+selector        : chain ("|" chain)*
+?chain          : primary
+                | chain "-" PERCENT_IDENT -> descendant_named
+                | chain "-" IDENT         -> descendant_tagged
+                | chain PERCENT_IDENT     -> child_named
+                | chain IDENT             -> child_tagged
+                | chain "*"               -> anychild
+
+?primary        : "&" IDENT         -> some_tagged
+                | "&" PERCENT_IDENT -> some_named
+                | "(" ")"           -> root
+                | "*"               -> anychild_root
+                | IDENT             -> tagged
+                | PERCENT_IDENT     -> named
+                | primary ":first"  -> first
+                | primary ":last"   -> last
+
+// -------------------- EXPRESSIONS ----------------
+?expr           : add
+
+?add            : mul
+                | add "+" mul   -> add_op
+                | add "-" mul   -> sub_op
+
+?mul            : unary
+                | mul "*" unary -> mul_op
+                | mul "/" unary -> div_op
+
+?unary          : primary_expr
+                | "+" unary
+                | "-" unary     -> neg
+
+?primary_expr   : "(" expr ")"
+                | NUMBER        -> number
+                | STRING        -> string
+                | (inline_selector | argument | itself) ("." IDENT)* -> param
+
+inline_selector.0 : selector
+argument.1        : IDENT
+itself.1          : "(" ")"

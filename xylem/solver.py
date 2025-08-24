@@ -51,6 +51,7 @@ def promote(c):
     if isinstance(c, (int, float)):
         return LinearExpr({}, c)
     else:
+        assert isinstance(c, LinearExpr)
         return c
 
 @dataclass
@@ -160,7 +161,8 @@ class LinearExpr:
             return self
 
 class System:
-    def __init__(self, fixed):
+    def __init__(self, fixed=None):
+        fixed = {} if fixed is None else fixed
         self.fixed = {k: dummy() + v for k, v in fixed.items()}
         self.constraints = set()
         self.Cu = {}
@@ -184,10 +186,12 @@ class System:
     def results(self):
         self.solve()
         results = {}
-        for k, c in self.Cv.items():
-            results[k] = c.constant
         for k, c in self.Cu.items():
             results[k] = c.constant
+            assert k not in self.fixed
+        for k, c in self.Cv.items():
+            results[k] = c.constant
+            assert k not in self.fixed
         return results
 
     def solve(self):
@@ -195,16 +199,32 @@ class System:
             _minimize_(self.Cu, self.Cv, self.O)
             self.resolve = False
 
-    def refine(self, fixed):
+    def refine(self, fixed, tol=0.0):
+        changed = False
         subs = {}
+        eqs = []
         for k, v in fixed.items():
             if k in self.fixed:
-                subs[k] = k - self.fixed[k]
-                self.fixed[k] = LinearExpr(self.fixed[k].coeffs, v)
+                n = self.fixed[k].var
+                p = self.fixed[k].constant
+                if p != v:
+                    subs[n] = self.fixed[k] - p + (v - p)
+                    self.fixed[k] = LinearExpr(self.fixed[k].coeffs, v)
+                    if abs(v - p) > tol:
+                        changed = True
             else:
                 self.fixed[k] = dummy() + v
+                subs[k] = self.fixed[k]
+                if k in self.Cu:
+                    eqs.append(_remove_(self.Cu, k))
+                elif k in self.Cv:
+                    eqs.append(_remove_(self.Cv, k))
+                changed = True
+        for eq in eqs:
+            _insert_equation_(self.Cu, self.Cv, eq.subs(subs))
         _subs_(subs, self.Cu, self.Cv, self.O)
-        _dual_simplex_(Cu, Cv, O)
+        _dual_simplex_(self.Cu, self.Cv, self.O)
+        return changed
 
     def format(self, names):
         out = ["objective:"]
@@ -278,6 +298,9 @@ def _lex_entering_variable_(O):
             yield k
 
 def _remove_equation_(Cu, Cv, O, marker):
+    if marker in Cv:
+        Cv.pop(marker)
+        return
     j = min(_leaving_variable_(Cv, marker, lambda q: True), key=_lvf_, default=(0,None))[1]
     if j is not None:
         return _pivot_({}, remove(Cv, j), marker, Cu, Cv, O)
@@ -349,41 +372,41 @@ class Constraint:
 def eq(expr, strength=None):
     if strength is None:
         marker = dummy()
-        return Constraint(expr + marker, {}, marker)
+        return Constraint(expr + marker, {}, marker.var)
     else:
         s1 = slack()
         s2 = slack()
-        return Constraint(expr + s1 - s2, {strength: s1 + s2}, s1)
+        return Constraint(expr + s1 - s2, {strength: s1 + s2}, s1.var)
 
 def le(expr, strength=None):
     if strength is None:
         s1 = slack()
-        return Constraint(expr + s1, {}, s1)
+        return Constraint(expr + s1, {}, s1.var)
     else:
         s1 = slack()
         s2 = slack()
-        return Constraint(expr + s1 - s2, {strength: s2}, s1)
+        return Constraint(expr + s1 - s2, {strength: s2}, s1.var)
 
 def ge(expr, strength=None):
     if strength is None:
         s1 = slack()
-        return Constraint(expr - s1, {}, s1)
+        return Constraint(expr - s1, {}, s1.var)
     else:
         s1 = slack()
         s2 = slack()
-        return Constraint(expr - s1 + s2, {strength: s2}, s1)
+        return Constraint(expr - s1 + s2, {strength: s2}, s1.var)
 
 def les(expr, strength=None):
     if strength is None:
         return eq(expr)
     s1 = slack()
-    return Constraint(expr + s1, {strength: s1}, s1)
+    return Constraint(expr + s1, {strength: s1}, s1.var)
 
 def ges(expr, strength=None):
     if strength is None:
         return eq(expr)
     s1 = slack()
-    return Constraint(expr - s1, {strength: s1}, s1)
+    return Constraint(expr - s1, {strength: s1}, s1.var)
 
 def system1():
     xl = flex()

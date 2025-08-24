@@ -183,6 +183,22 @@ class Arg(Expression):
     def shift(self, f):
         return Arg(f(self.index))
 
+class Self(Expression):
+    def eval(self, env, root):
+        return root
+
+    def shift(self, f):
+        return self
+
+@dataclass(eq=False)
+class String(Expression):
+    value : str
+    def eval(self, env, root):
+        return self.value
+
+    def shift(self, f):
+        return self
+
 @dataclass(eq=False)
 class Parameter(Expression):
     base : Expression
@@ -267,7 +283,7 @@ class Anchor(Declaration):
     def resolve(self, system, env, root):
         args =  [arg.eval(env, root) if isinstance(arg, Expression) else arg for arg in self.args]
         c = self.op(*args)
-        system.add(c)
+        system.add_constraint(c)
 
 @dataclass(eq=False)
 class Tile:
@@ -278,9 +294,9 @@ class Edge(Tile):
     def chain(self, column, system, env, root, x):
         if x is not None:
             if column:
-                system.add(les(x - root.height, 0))
+                system.add_constraint(les(x - root.height, 0))
             else:
-                system.add(les(x - root.width, 0))
+                system.add_constraint(les(x - root.width, 0))
         return promote(0)
 
     def shift(self, f):
@@ -306,12 +322,12 @@ class Cell(Tile):
         if column:
             if x is not None:
                 top = node.orient_y(root, node.top)
-                system.add(eq(top - x))
+                system.add_constraint(eq(top - x))
             return node.orient_y(root, node.bottom)
         else:
             if x is not None:
                 left = node.orient_x(root, node.left)
-                system.add(eq(left - x))
+                system.add_constraint(eq(left - x))
             return node.orient_x(root, node.right)
 
     def shift(self, f):
@@ -334,3 +350,12 @@ class Many(Declaration):
     def resolve(self, system, env, root):
         for decl in self.body:
             decl.resolve(system, env, root)
+
+@dataclass(eq=False)
+class Relation(Declaration):
+    name : str
+    args : List[Any]
+
+    def resolve(self, system, env, root):
+        args =  [arg.eval(env, root) if isinstance(arg, Expression) else arg for arg in self.args]
+        system.add_relation(self.name, root, args)

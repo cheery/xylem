@@ -1,10 +1,13 @@
 import pygame
-from xylem.solver import *
+from xylem.fixpoint import *
 from xylem.nodes import *
-from xylem.stylesheet import parse_declarations
+from xylem.stylesheet import parse
+
+from random import randint
 
 width = slack()
 height = slack()
+H = flex()
 root = Node(
     children=[
         Node(width = promote(4*10), height = promote(4*10)),
@@ -18,6 +21,15 @@ root = Node(
             ],
             tag = 'column',
         ),
+        Node(
+            children=[
+                Node(width = promote(randint(10,80)),
+                     height = promote(randint(10,32)))
+                for _ in range(20)
+            ],
+            height = H,
+            tag = 'paragraph'
+        ),
     ], 
     left = promote(0),
     top = promote(0),
@@ -25,7 +37,7 @@ root = Node(
     height = height,
     tag = 'row')
 
-system = System({})
+system = System()
 
 # thing 
 # %thing
@@ -64,7 +76,7 @@ system = System({})
 # x :empty { }
 
 
-ruleset = parse_declarations("""
+ruleset = parse("""
 
 & row {
   x;y=* { H: (x)(y) }
@@ -80,18 +92,26 @@ ruleset = parse_declarations("""
   H: Edge-a-(*)-a-Edge
 }
 
+& paragraph {
+  @ ().width = ().height
+  layout("knuth-plass")
+}
+
 """)
 
 ruleset.resolve(system, (), root)
 
-print(system.format(Names({})))
+results = system.results()
 
 def draw(screen, node, results, x, y):
     x += node.left.eval(results)
     y += node.top.eval(results)
     w = node.width.eval(results)
     h = node.height.eval(results)
-    pygame.draw.rect(screen, (200,200,200), (x,y,w,h), 1)
+    if node.tag == "paragraph":
+        pygame.draw.rect(screen, (255,100,100), (x,y,w,h), 1)
+    else:
+        pygame.draw.rect(screen, (200,200,200), (x,y,w,h), 1)
     for child in node.children:
         draw(screen, child, results, x, y)
 
@@ -101,15 +121,15 @@ screen = pygame.display.set_mode((1280,640))
 
 clock = pygame.time.Clock()
 
+
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             raise SystemExit
 
-    results = system.results()
     screen.fill((30,30,30))
-    draw(screen, root, results, 0, 0)
+    draw(screen, root, results, 100, 100)
 
     pygame.display.flip()
     clock.tick(60)

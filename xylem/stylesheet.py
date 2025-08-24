@@ -1,39 +1,81 @@
-import re
+from importlib import resources
+from lark import Lark, Transformer, Tree, v_args
 import operator
+
 from .nodes import (
     Root, Some, Child, Descendant, AnyChild, First, Last, OneOf,
-    Arg, Parameter, Op, Number,
+    Arg, Self, Parameter, Op, Number, String,
     Dim, Descend, Match, AtEmpty, Adjacent, Anchor, VisualFormat, Many,
-    Edge, Space, Cell,
+    Edge, Space, Cell, Relation
 )
 from .solver import eq, le, ge, les, ges
 
-class Context:
-    def __init__(self, selectors, dims, index, expects_selector=False):
-        self.selectors = selectors
-        self.dims = dims
-        self.index = index
-        self.expects_selector = expects_selector
+def _load_parser_():
+    lark_file = resources.files(__package__).joinpath("stylesheet.lark")
+    with lark_file.open("r", encoding="utf8") as f:
+        grammar = f.read()
+    return Lark(grammar, start="start", parser="lalr")
 
-    def intros(self, selector):
-        self.index += 1
-        self.selectors.append((selector, -self.index))
-        return Arg(-self.index)
+def parse(text):
+    return ASTBuilder().transform(parser.parse(text))
 
-    def lookup(self, name):
-        if name not in self.dims:
-            self.index += 1
-            self.dims[name] = -self.index
-        return Arg(self.dims[name])
+def many(decls):
+    if len(decls) == 1:
+        return decls[0]
+    return Many(decls)
 
+class ASTBuilder(Transformer):
+    def __init__(self):
+        self.env = []
+        self.inline_selectors = []
+        self.inline_dims      = {}
+        self.inline_index     = 0
+
+    def __default__(self, x,y,z):
+        raise SyntaxError(str((x,y,z)))
+
+    # ---entering scope---
+    @v_args(inline=True)
+    def bind(self, name):
+        self.env.append(name)
+        return name
+
+    @v_args(inline=True)
+    def inline_selector(self, sel):
+        self.inline_index += 1
+        self.inline_selectors.append((sel, -self.inline_index))
+        return Arg(-self.inline_index)
+
+    @v_args(inline=True)
+    def argument(self, name):
+        for depth, n in enumerate(reversed(self.env)):
+            if n == name:
+                return Arg(depth)
+        return self.inline_selector(Child(Root(), name))
+
+    @v_args(inline=True)
+    def itself(self):
+        return Self()
+
+    @v_args(inline=True)
+    def spaced_ident(self, name):
+        for depth, n in enumerate(reversed(self.env)):
+            if n == name:
+                return Arg(depth)
+        if name not in self.inline_dims:
+            self.inline_index += 1
+            self.inline_dims[name] = -self.inline_index
+        return Arg(self.inline_dims[name])
+ 
+    # ---leaving scope, helpers---
     def mapper(self):
-        shift = len(self.selectors) + len(self.dims)
+        shift = len(self.inline_selectors) + len(self.inline_dims)
         mapping = {}
         k = 0
-        for index in self.dims.values():
+        for index in self.inline_dims.values():
             mapping[index] = k
             k += 1
-        for _, index in reversed(self.selectors):
+        for _, index in reversed(self.inline_selectors):
             mapping[index] = k
             k += 1
         def _f_(i):
@@ -42,550 +84,247 @@ class Context:
             else:
                 return mapping[i]
         return _f_
-        
+         
     def wrap(self, declaration):
-        for dim in sorted(self.dims):
+        dims = self.inline_dims
+        sels = self.inline_selectors
+        self.inline_dims = {}
+        self.inline_selectors = []
+        self.inline_index = 0
+        for dim in sorted(dims):
             declaration = Dim(declaration, slack=True)
-        if self.selectors:
-            m = [sel for sel, _ in self.selectors]
+        if sels:
+            m = [sel for sel, _ in sels]
             return Match(m, declaration)
         else:
             return declaration 
 
-TOKEN_RE = re.compile(
-    r"""
-    \s*(
-        \#.* |
-        \{ | \} | :empty | :first | :last |           # braces & pseudos
-        H: | V: |                                     # visual format heads
-        @\d+ | @ |                                    # anchor head
-        <= | >= | <\| | >\| | = |                     # relation ops
-        \(\) |                                        # root
-        \(| \) |                                      # parens
-        - | \| | ; | , | : | \. |                     # punctuation
-        \* |                                          # wildcard
-        %[_A-Za-z][_A-Za-z0-9]* |                     # %name
-        [_A-Za-z][_A-Za-z0-9]* |                      # identifier
-        \d+\.\d+ | \d+ |                              # number
-        .                                             # catch remaining stuff
-    )
-    """,
-    re.VERBOSE,
-)
+    # ---tokens---
+    def NUMBER(self, tok):
+        return tok[:]
 
-def tokenize(s: str):
-    toks = [t for t in TOKEN_RE.findall(s) if t.strip() != ""]
-    toks = [t for t in toks if not t.startswith("#")]
-    return toks
+    def STRING(self, tok):
+        return tok[1:-1]
 
+    def IDENT(self, tok):
+        return tok[:]
 
-def _is_ident(tok):
-    return bool(tok) and re.match(r"^[_A-Za-z]", tok)
+    def PERCENT_IDENT(self, tok):
+        return tok[1:]
 
-class SelParser:
-    """Selector parser (no lookahead across declaration boundaries)."""
+    # ---declarations---
+    @v_args(inline=True)
+    def empty(self):
+        return Many([])
 
-    def __init__(self, toks, i0=0):
-        self.toks = toks
-        self.i = i0
+    @v_args(inline=True)
+    def start(self, decls):
+        return many(decls)
 
-    def peek(self):
-        return self.toks[self.i] if self.i < len(self.toks) else None
+    @v_args(inline=True)
+    def many(self, decls):
+        return many(decls)
 
-    def take(self, expected=None):
-        tok = self.peek()
-        if tok is None:
-            raise SyntaxError("Unexpected end of input (selector)")
-        if expected is not None and tok != expected:
-            raise SyntaxError(f"Expected {expected!r}, got {tok!r} (selector)")
-        self.i += 1
-        return tok
+    @v_args(inline=True)
+    def declarations(self, decl):
+        return [decl]
 
-    def at_end(self): return self.i >= len(self.toks)
+    @v_args(inline=True)
+    def prepend(self, decl, decls):
+        decls.insert(0, decl)
+        return decls
 
-    def parse_primary(self):
-        tok = self.peek()
-
-        if tok == "&":
-            self.take("&")
-            nxt = self.peek()
-            if nxt and nxt.startswith("%"):
-                self.take()
-                sel = Some(nxt[1:], hashed=True)
-            elif _is_ident(nxt):
-                self.take()
-                sel = Some(nxt, hashed=False)
-            else:
-                raise SyntaxError("`&` must be followed by tag or %name")
-            return self.apply_suffix(sel)
-
-        tok = self.take()
-        if tok == "()":
-            base = Root()
-        elif tok == "*":
-            base = AnyChild(Root())
-        elif tok.startswith("%"):
-            base = Child(Root(), tok[1:], hashed=True)
-        elif tok not in (":first", ":last", "-", "|", "{", "}", ";", ",", ":"):
-            # identifier
-            base = Child(Root(), tok, hashed=False)
+    # ---selectors---
+    def selector(self, oneof):
+        if len(oneof) == 1:
+            return oneof[0]
         else:
-            raise SyntaxError(f"Unexpected token {tok!r} in selector")
+            return OneOf(oneof)
 
-        return self.apply_suffix(base)
+    @v_args(inline=True)
+    def anychild_root(self):
+        return AnyChild(Root())
 
-    def apply_suffix(self, sel):
-        while self.peek() in (":first", ":last"):
-            s = self.take()
-            sel = First(sel) if s == ":first" else Last(sel)
+    @v_args(inline=True)
+    def anychild(self, sel):
+        return AnyChild(sel)
+
+    @v_args(inline=True)
+    def root(self):
+        return Root()
+
+    @v_args(inline=True)
+    def tagged(self, name):
+        return Child(Root(), name, False)
+
+    @v_args(inline=True)
+    def named(self, name):
+        return Child(Root(), name, True)
+
+    @v_args(inline=True)
+    def some_tagged(self, name):
+        return Some(name, False)
+
+    @v_args(inline=True)
+    def some_named(self, name):
+        return Some(name, True)
+
+    @v_args(inline=True)
+    def first(self, sel):
+        return First(sel)
+
+    @v_args(inline=True)
+    def last(self, sel):
+        return Last(sel)
+
+    @v_args(inline=True)
+    def child_tagged(self, sel, name):
+        return Child(sel, name, False)
+
+    @v_args(inline=True)
+    def child_named(self, sel, name):
+        return Child(sel, name, True)
+
+    @v_args(inline=True)
+    def descendant_tagged(self, sel, name):
+        return Descendant(sel, name, False)
+
+    @v_args(inline=True)
+    def descendant_named(self, sel, name):
+        return Descendant(sel, name, True)
+
+    # ---expressions---
+    def add_op(self, items):
+        return Op(operator.add, items)
+
+    def sub_op(self, items):
+        return Op(operator.sub, items)
+
+    def mul_op(self, items):
+        return Op(operator.mul, items)
+
+    def div_op(self, items):
+        return Op(operator.truediv, items)
+
+    def neg(self, items):
+        return Op(operator.neg, items)
+
+    @v_args(inline=True)
+    def number(self, text):
+        return Number(float(text))
+
+    @v_args(inline=True)
+    def string(self, text):
+        return String(text)
+
+    @v_args(inline=True)
+    def param(self, base, *names):
+        for name in names:
+            base = Parameter(base, name)
+        return base
+
+    # ---anchor---
+    @v_args(inline=True)
+    def anchor_req(self, lhs, relop, rhs):
+        return self.anchor(None, lhs, relop, rhs)
+
+    @v_args(inline=True)
+    def anchor(self, s, lhs, relop, rhs):
+        if relop == "=":
+            relfn = eq
+        elif relop == "<=":
+            relfn = le
+        elif relop == ">=":
+            relfn = ge
+        elif relop == "<|":
+            relfn = les
+        elif relop == ">|":
+            relfn = ges
+        f = self.mapper()
+        lhs = lhs.shift(f)
+        rhs = rhs.shift(f)
+        if s is not None:
+            return self.wrap(Anchor(relfn, [Op(operator.sub, [lhs, rhs]), int(s)]))
+        else:
+            return self.wrap(Anchor(relfn, [Op(operator.sub, [lhs, rhs])]))
+
+    # ---relation---
+    @v_args(inline=True)
+    def relation_decl(self, name, args):
+        if args is None:
+            args = []
+        f = self.mapper()
+        args = [arg.shift(f) for arg in args]
+        return self.wrap(Relation(name, args))
+
+    def arg_list(self, args):
+        return args
+
+    # ---heads / vf ---
+    def horizontal(self, tiles):
+        f = self.mapper()
+        tiles = [tile.shift(f) for tile in tiles]
+        return self.wrap(VisualFormat(False, tiles))
+
+    def vertical(self, tiles):
+        f = self.mapper()
+        tiles = [tile.shift(f) for tile in tiles]
+        return self.wrap(VisualFormat(True, tiles))
+
+    @v_args(inline=True)
+    def at_empty(self, sel, body):
+        return AtEmpty(sel, body)
+
+    @v_args(inline=True)
+    def descend(self, sel, body):
+        return Descend(sel, body)
+
+    @v_args(inline=True)
+    def match(self, bindings, body):
+        for _ in bindings:
+            self.env.pop()
+        return Match(bindings, body)
+
+    def bindings(self, binds):
+        return binds
+
+    @v_args(inline=True)
+    def binding(self, name, sel):
         return sel
 
-    def _is_primary_start(self, tok):
-        if tok in (None, "|", "{", "}", ";", ",", ":empty"):
-            return False
-        if tok in ("()", "*", "&"):
-            return True
-        if tok.startswith("%"):
-            return True
-        # plain identifier
-        return _is_ident(tok)
+    @v_args(inline=True)
+    def adjacent_decl(self, x, y, sel, body):
+        return Adjacent(sel, body)
 
-    # ---- rebasing helpers -------------------------------------------
-    def _attach_child(self, lhs, rhs):
-        if isinstance(rhs, First):
-            return First(self._attach_child(lhs, rhs.parent))
-        if isinstance(rhs, Last):
-            return Last(self._attach_child(lhs, rhs.parent))
-        if isinstance(rhs, OneOf):
-            return OneOf([self._attach_child(lhs, s) for s in rhs.seq])
-        if isinstance(rhs, AnyChild):
-            return AnyChild(lhs)
-        if isinstance(rhs, Child):
-            return Child(lhs, rhs.pattern, getattr(rhs, "hashed", False))
-        if isinstance(rhs, Root):
-            return lhs
-        raise SyntaxError(f"Cannot attach (child) {type(rhs).__name__}")
+    # ---tiles---
+    @v_args(inline=True)
+    def edge(self):
+        return Edge()
 
-    def _attach_desc(self, lhs, rhs):
-        if isinstance(rhs, First):
-            return First(self._attach_desc(lhs, rhs.parent))
-        if isinstance(rhs, Last):
-            return Last(self._attach_desc(lhs, rhs.parent))
-        if isinstance(rhs, OneOf):
-            return OneOf([self._attach_desc(lhs, s) for s in rhs.seq])
-        if isinstance(rhs, Child):
-            return Descendant(lhs, rhs.pattern, getattr(rhs, "hashed", False))
-        if isinstance(rhs, Root):
-            return lhs
-        if isinstance(rhs, AnyChild):
-            raise SyntaxError("`foo - *` requires a DescendantAny node (not in IR).")
-        raise SyntaxError(f"Cannot attach (descendant) {type(rhs).__name__}")
+    @v_args(inline=True)
+    def space(self, expr):
+        return Space(expr)
 
-    # ---- chain (whitespace child / '-' descendant) ------------------
-    def parse_chain(self):
-        left = self.parse_primary()
-        while True:
-            nxt = self.peek()
-            if nxt == "-":
-                self.take("-")
-                right = self.parse_primary()
-                left = self._attach_desc(left, right)
-            elif self._is_primary_start(nxt):
-                right = self.parse_primary()
-                left = self._attach_child(left, right)
-            else:
-                break
-        return left
+    @v_args(inline=True)
+    def cell(self, expr):
+        return Cell(expr)
 
-    # ---- disjunction -------------------------------------------------
-    def parse_selector(self):
-        sel = self.parse_chain()
-        items = [sel]
-        while self.peek() == "|":
-            self.take("|")
-            items.append(self.parse_chain())
-        return items[0] if len(items) == 1 else OneOf(items)
+    @v_args(inline=True)
+    def dim_decl(self, dims, decl):
+        for _ in dims:
+            self.env.pop()
+        decl = many(decl)
+        for s in reversed(dims):
+            decl = Dim(decl, slack=s)
+        return decl
 
+    def dim_name_list(self, items):
+        return items
 
-def parse_selector_from(tokens, i0=0):
-    p = SelParser(tokens, i0)
-    node = p.parse_selector()
-    return node, p.i
+    def slack(self, tok):
+        return True
 
+    def flex(self, tok):
+        return False
 
-# ==== EXPRESSION PARSER ==============================================
-
-
-class ExprParser:
-    def __init__(self, toks, i0, env_stack, context):
-        self.toks = toks
-        self.i = i0
-        self.env_stack = env_stack
-        self.context = context
-
-    def peek(self):
-        return self.toks[self.i] if self.i < len(self.toks) else None
-
-    def take(self, expected=None):
-        tok = self.peek()
-        if tok is None:
-            raise SyntaxError("Unexpected end of input (expression)")
-        if expected is not None and tok != expected:
-            raise SyntaxError(f"Expected {expected!r}, got {tok!r} (expression)")
-        self.i += 1
-        return tok
-
-    def _lookup_var(self, name):
-        for depth, env in enumerate(reversed(self.env_stack)):
-            if name in env:
-                return Arg(depth)
-        return None
-
-    def parse_primary(self):
-        tok = self.peek()
-        if tok == "(":
-            self.take("(")
-            expr, j = parse_expression_from(self.toks, self.i, self.env_stack, self.context)
-            self.i = j
-            if self.peek() != ")":
-                raise SyntaxError("Expected ')'")
-            self.take(")")
-            return expr
-    
-        if tok and re.match(r"^\d+(\.\d+)?$", tok):
-            self.take()
-            val = float(tok) if "." in tok else int(tok)
-            return Number(val)
-    
-        # Identifiers / selectors
-        if tok in ("()", "&") or tok.startswith("%") or re.match(r"^[_A-Za-z*]", tok):
-            if tok == "*":
-                self.take("*")
-                expr = AnyChild(Root())
-                expr = self.context.intros(expr)
-            elif re.match(r"^[_A-Za-z]", tok) and not (tok in ("()", "&") or tok.startswith("%")):
-                name = self.take()
-                bound = self._lookup_var(name)
-                if bound is not None:
-                    expr = bound
-                elif self.peek() == "." or self.context.expects_selector:
-                    expr = Child(Root(), name)
-                    expr = self.context.intros(expr)
-                else:
-                    expr = self.context.lookup(name)
-            else:
-                expr, j = parse_selector_from(self.toks, self.i)
-                expr = self.context.intros(expr)
-                self.i = j
-            while self.peek() == ".":
-                self.take(".")
-                attr = self.take()
-                expr = Parameter(expr, attr)
-            return expr
-    
-        raise SyntaxError(f"Unexpected token {tok!r} in expression")
-
-    # ---- unary -------------------------------------------------------
-    def parse_unary(self):
-        if self.peek() == "+":
-            self.take("+")
-            return self.parse_unary()
-        if self.peek() == "-":
-            self.take("-")
-            return Op(operator.neg, [self.parse_unary()])
-        return self.parse_primary()
-
-    # ---- mul/div -----------------------------------------------------
-    def parse_muldiv(self):
-        expr = self.parse_unary()
-        while self.peek() in ("*", "/"):
-            op = self.take()
-            rhs = self.parse_unary()
-            expr = Op(operator.mul, [expr, rhs]) if op == "*" else Op(operator.truediv, [expr, rhs])
-        return expr
-
-    # ---- add/sub -----------------------------------------------------
-    def parse_addsub(self):
-        expr = self.parse_muldiv()
-        while self.peek() in ("+", "-"):
-            op = self.take()
-            rhs = self.parse_muldiv()
-            expr = Op(operator.add, [expr, rhs]) if op == "+" else Op(operator.sub, [expr, rhs])
-        return expr
-
-def parse_expression_from(tokens, i0, env_stack, context, in_dim=False):
-    p = ExprParser(tokens, i0, env_stack, context)
-    if in_dim:
-        expr = p.parse_primary()
-    else:
-        expr = p.parse_addsub()
-    return expr, p.i
-
-# ==== VISUAL FORMAT (tiles) ==========================================
-
-class VFParser:
-    def __init__(self, toks, i0=0, env_stack=None):
-        self.toks = toks
-        self.i = i0
-        self.env_stack = env_stack or []
-        self.context = Context([], {}, 0)
-
-    def peek(self): return self.toks[self.i] if self.i < len(self.toks) else None
-    def take(self, expected=None):
-        tok = self.peek()
-        if tok is None: raise SyntaxError("Unexpected end in visual format")
-        if expected is not None and tok != expected:
-            raise SyntaxError(f"Expected {expected!r}, got {tok!r} in visual format")
-        self.i += 1
-        return tok
-
-    def parse(self):
-        head = self.take()
-        if head not in ("H:", "V:"):
-            raise SyntaxError("VisualFormat must start with H: or V:")
-        column = (head == "V:")
-
-        tiles = []
-        # tile list until end of line / declaration boundary (handled by caller)
-        while True:
-            tok = self.peek()
-            if tok in (None, "}", "{"):
-                break
-            if tok == "Edge":
-                self.take()
-                tiles.append(Edge())
-                continue
-            if tok == "-":
-                # - expr -
-                self.take("-")
-                self.context.expects_selector = False
-                expr, j = parse_expression_from(self.toks, self.i, self.env_stack, self.context, True)
-                self.i = j
-                if self.peek() != "-":
-                    raise SyntaxError("Expected closing '-' for space")
-                self.take("-")
-                tiles.append(Space(expr))
-                continue
-            if tok == "(":
-                # ( expr ) as Cell
-                self.take("(")
-                self.context.expects_selector = True
-                expr, j = parse_expression_from(self.toks, self.i, self.env_stack, self.context)
-                self.i = j
-                if self.peek() != ")":
-                    raise SyntaxError("Expected ')'")
-                self.take(")")
-                tiles.append(Cell(expr))
-                continue
-            break
-        f = self.context.mapper()
-        tiles = [tile.shift(f) for tile in tiles]
-        return self.context.wrap(VisualFormat(column, tiles)), self.i
-
-
-def parse_visual_format_from(tokens, i0=0, env_stack=None):
-    p = VFParser(tokens, i0, env_stack)
-    node, j = p.parse()
-    return node, j
-
-
-# ==== DECLARATION PARSER =============================================
-
-class DeclParser:
-    def __init__(self, toks, i0=0, env_stack=None):
-        self.toks = toks
-        self.i = i0
-        # env_stack is a list of dicts (scope), for Arg binding
-        self.env_stack = env_stack or []
-
-    def peek(self): return self.toks[self.i] if self.i < len(self.toks) else None
-    def take(self, expected=None):
-        tok = self.peek()
-        if tok is None: raise SyntaxError("Unexpected end in declaration")
-        if expected is not None and tok != expected:
-            raise SyntaxError(f"Expected {expected!r}, got {tok!r} in declaration")
-        self.i += 1
-        return tok
-
-    # ---- block body: { decl* } --------------------------------------
-    def parse_block_body(self, env_ext):
-        env_stack, self.env_stack = self.env_stack, self.env_stack + env_ext
-        self.take("{")
-        decls = []
-        while True:
-            tok = self.peek()
-            if tok is None:
-                raise SyntaxError("Unterminated block")
-            if tok == "}":
-                self.take("}")
-                break
-            decls.append(self.parse_declaration())
-        self.env_stack = env_stack
-        if len(decls) == 1:
-            return decls[0]
-        return Many(decls)
-
-    # ---- Dim a,b,!c: body -------------------------------------------
-    def parse_dim(self):
-        self.take("Dim")
-        names = []
-        # list a , b , !c  :
-        while True:
-            tok = self.peek()
-            if tok == ":":
-                self.take(":")
-                break
-            if tok == ",":
-                self.take(",")
-                continue
-            if not tok:
-                raise SyntaxError("Unexpected end in Dim")
-            names.append(self.take())
-        # Introduce one Dim per name and parse body once *inside* each Dim scope
-        # We parse the body text after ':' once per var (as in your IR).
-        
-        env_stack, self.env_stack = self.env_stack, self.env_stack + [n.lstrip('!') for n in names]
-        body = self.parse_declaration() #if self.peek() == "{" else self.parse_declaration(env)
-        self.env_stack = env_stack
-        # Note: The IR Dim(node, slack=bool) wraps a body expecting it to use the arg.
-        # Binding: when entering Dim we push a new arg name into scope, then parse body.
-        # But your IR handles the runtime var introduction; we just emit Dim nodes.
-        decls = []
-        for nm in names:
-            slack = True
-            if nm.startswith("!"):
-                slack = False
-                nm = nm[1:]
-            # For De Bruijn binding in body, we *could* parse body under extended scope,
-            # but your runtime Dim will inject the arg. Keep parse-time scope as-is,
-            # and rely on runtime to wire env (simplifies mutual nesting).
-            decls.append(Dim(body, slack=slack))
-        if len(decls) == 1:
-            return decls[0]
-        return Many(decls)
-
-    # ---- @ … anchors -------------------------------------------------
-    def parse_anchor(self):
-        tok = self.take()
-        if tok == "@":
-            strength = None
-        else:
-            # @N
-            strength = int(tok[1:])
-        context = Context([], {}, 0)
-        # parse: expr ( = | <= | >= | <| | >| ) expr
-        lhs, j = parse_expression_from(self.toks, self.i, self.env_stack, context)
-        self.i = j
-        rel = self.take()  # =, <=, >=, <|, >|
-        rhs, j = parse_expression_from(self.toks, self.i, self.env_stack, context)
-        self.i = j
-
-        # map operator
-        if   rel == "=":  relfn = eq
-        elif rel == "<=": relfn = le
-        elif rel == ">=": relfn = ge
-        elif rel == "<|": relfn = les
-        elif rel == ">|": relfn = ges
-        else:
-            raise SyntaxError(f"Unknown relation {rel}")
-
-        f = context.mapper()
-        args = [Op(operator.sub, [lhs.shift(f), rhs.shift(f)])]
-        if strength is not None:
-            args.append(strength)
-        return context.wrap(Anchor(relfn, args))
-
-    # ---- Head forms before { body } ---------------------------------
-    # Forms:
-    #   selector { … }
-    #   selector :empty { … }
-    #   x=sel1 , y=sel2 { … }     (Match)
-    #   x ; y = selector { … }    (Adjacent)
-    #   H: …   |  V: …            (VisualFormat)
-    def parse_head_or_vf(self):
-        tok = self.peek()
-
-        # VisualFormat
-        if tok in ("H:", "V:"):
-            node, j = parse_visual_format_from(self.toks, self.i, self.env_stack)
-            self.i = j
-            return node
-
-        # Try selector head (possibly followed by :empty)
-        try:
-            sel, j = parse_selector_from(self.toks, self.i)
-        except Exception:
-            sel = None
-
-        # Otherwise: bindings head
-        # 1) x=sel , y=sel { … }
-        # 2) x ; y = sel  { … }
-        # Parse name or names
-        names = []
-        if _is_ident(self.peek()):
-
-            names.append(self.take())  # first name
-            if self.peek() == ";":
-                # Adjacent: x ; y = selector
-                self.take(";")
-                names.append(self.take())  # second name
-                self.take("=")
-                sel, j = parse_selector_from(self.toks, self.i)
-                self.i = j
-                body = self.parse_block_body(names)
-                return Adjacent(sel, body)
-
-            # Else, Match bindings list: x=sel , y=sel2
-            if self.peek() == "=":
-                selectors = []
-                self.take("=")
-                sel, j = parse_selector_from(self.toks, self.i)
-                self.i = j
-                selectors.append(sel)
-                while self.peek() == ",":
-                    self.take(",")
-                    nm = self.take()
-                    names.append(nm)
-                    self.take("=")
-                    sel, j = parse_selector_from(self.toks, self.i)
-                    self.i = j
-                    selectors.append(sel)
-                body = self.parse_block_body(names)
-                return Match(selectors, body)
-
-        if sel is not None:
-            self.i = j
-            # optional :empty { … }
-            if self.peek() == ":empty":
-                self.take(":empty")
-                body = self.parse_block_body([])
-                return AtEmpty(sel, body)
-            # Plain Descend
-            body = self.parse_block_body([])
-            return Descend(sel, body)
-        raise SyntaxError(f"Expected head (selector or bindings), got {self.peek()!r}")
-
-    # ---- Single declaration (one of the above) ----------------------
-    def parse_declaration(self):
-        tok = self.peek()
-        if tok is None:
-            raise SyntaxError(f"Expected a declaration")
-
-        if tok == "Dim":
-            return self.parse_dim()
-
-        if tok.startswith("@") or tok == "@":
-            return self.parse_anchor()
-
-        node = self.parse_head_or_vf()
-        return node
-
-def parse_declarations(source: str):
-    tokens = tokenize(source)
-    p = DeclParser(tokens, 0, env_stack=[])
-    decls = []
-    while p.peek() is not None:
-        decls.append(p.parse_declaration())
-    if len(decls) == 1:
-        return decls[0]
-    return Many(decls)
+parser = _load_parser_()
