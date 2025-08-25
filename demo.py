@@ -1,5 +1,5 @@
 import pygame
-from xylem.fixpoint import *
+from xylem.cascade import System
 from xylem.nodes import *
 from xylem.stylesheet import parse
 
