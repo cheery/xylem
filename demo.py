@@ -93,7 +93,7 @@ ruleset = parse("""
 }
 
 & paragraph {
-  @ ().width = ().height
+  @ ().width = 200
   layout("knuth-plass")
 }
 

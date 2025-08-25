@@ -1,28 +1,32 @@
-def details(node):
-    consumes = set()
-    produces = set()
-    produces.add(node.height.var)
-    consumes.update(node.width.coeffs)
-    for child in node.children:
-        produces.add(child.left.var)
-        produces.add(child.top.var)
-        consumes.update(child.width.coeffs)
-        consumes.update(child.height.coeffs)
-    return consumes, produces
+class Solver:
+    def __init__(self, node):
+        self.node = node
 
-def solve(node, results):
-    values = {}
-    y = 0
-    for line in knuth_plass(node, results):
-        x = 0
-        for child in line:
-            values[child.left.var] = x
-            values[child.top.var] = y
-            x += child.width.eval(results)
-        tallest = max((c.height.eval(results) for c in line), default=0)
-        y += tallest
-    values[node.height.var] = y
-    return values
+    def details(self):
+        consumes = set()
+        produces = set()
+        produces.add(self.node.height.var)
+        consumes.update(self.node.width.coeffs)
+        for child in self.node.children:
+            produces.add(child.left.var)
+            produces.add(child.top.var)
+            consumes.update(child.width.coeffs)
+            consumes.update(child.height.coeffs)
+        return consumes, produces
+
+    def solve(self, results):
+        values = {}
+        y = 0
+        for line in knuth_plass(self.node, results):
+            x = 0
+            for child in line:
+                values[child.left.var] = x
+                values[child.top.var] = y
+                x += child.width.eval(results)
+            tallest = max((c.height.eval(results) for c in line), default=0)
+            y += tallest
+        values[self.node.height.var] = y
+        return values
 
 def knuth_plass(node, results):
     line_width = node.width.eval(results)
@@ -84,4 +88,3 @@ def knuth_plass(node, results):
             j = i
     lines.reverse()
     return lines
-

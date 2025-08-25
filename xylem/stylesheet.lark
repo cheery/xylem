@@ -9,7 +9,7 @@ STRING          : /"[^"]*"|'[^']*'/
 PERCENT_IDENT   : "%" IDENT
 
 // operators
-REL_OP          : "=" | "<=" | ">=" | "<\|" | ">\|"
+REL_OP          : "=" | "<=" | ">=" | "<|" | ">|"
 
 // -------------------- TOP LEVEL -----------------
 start           : declarations
