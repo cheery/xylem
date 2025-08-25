@@ -1,38 +1,39 @@
 import pygame
-from xylem.fixpoint import *
+from xylem.cpsat import System
 from xylem.nodes import *
 from xylem.stylesheet import parse
+from xylem.constraints import Flex, Slack, Constant
 
 from random import randint
 
-width = slack()
-height = slack()
-H = flex()
+width = Slack()
+height = Slack()
+H = Flex()
 root = Node(
     children=[
-        Node(width = promote(4*10), height = promote(4*10)),
-        Node(width = promote(4*20), height = promote(4*15)),
-        Node(width = promote(4*7),  height = promote(4*25)),
+        Node(width = Constant(4*10), height = Constant(4*10)),
+        Node(width = Constant(4*20), height = Constant(4*15)),
+        Node(width = Constant(4*7),  height = Constant(4*25)),
         Node(
             children=[
-                Node(width = promote(4*10), height = promote(4*10)),
-                Node(width = promote(4*20), height = promote(4*15)),
-                Node(width = promote(4*7),  height = promote(4*25)),
+                Node(width = Constant(4*10), height = Constant(4*10)),
+                Node(width = Constant(4*20), height = Constant(4*15)),
+                Node(width = Constant(4*7),  height = Constant(4*25)),
             ],
             tag = 'column',
         ),
         Node(
             children=[
-                Node(width = promote(randint(10,80)),
-                     height = promote(randint(10,32)))
+                Node(width = Constant(randint(10,80)),
+                     height = Constant(randint(10,32)))
                 for _ in range(20)
             ],
             height = H,
             tag = 'paragraph'
         ),
     ], 
-    left = promote(0),
-    top = promote(0),
+    left = Constant(0),
+    top = Constant(0),
     width = width,
     height = height,
     tag = 'row')
@@ -78,6 +79,8 @@ system = System()
 
 ruleset = parse("""
 
+@ ().height <= 200
+
 & row {
   x;y=* { H: (x)(y) }
   x=*:first { H: Edge(x) }
@@ -93,8 +96,11 @@ ruleset = parse("""
 }
 
 & paragraph {
+  @1 *.left = 0
+  @1 *.top  = 0
+  @1 ().width = 100
   @ ().width = ().height
-  layout("knuth-plass")
+  layout("wrap")
 }
 
 """)
@@ -102,6 +108,17 @@ ruleset = parse("""
 ruleset.resolve(system, (), root)
 
 results = system.results()
+
+def disp(node, results, x, y, depth):
+    x += node.left.eval(results)
+    y += node.top.eval(results)
+    w = node.width.eval(results)
+    h = node.height.eval(results)
+    print(" "*depth + f"{node.tag} {node.name} {x} {y} {w} {h}")
+    for child in node.children:
+        disp(child, results, x, y, depth+2)
+
+disp(root, results, 0, 0, 0)
 
 def draw(screen, node, results, x, y):
     x += node.left.eval(results)

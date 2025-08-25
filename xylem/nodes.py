@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Union, Optional
-from .solver import LinearExpr, flex, slack, eq, les, ges, promote
+from .constraints import Expression, Flex, Slack, Constant, eq, le, ge, les, ges
 from .solver import Names
 from itertools import product
 
@@ -9,10 +9,10 @@ class Node:
     children : List['Node'] = field(default_factory=list)
     name     : str = ""
     tag      : str = ""
-    left   : LinearExpr = field(default_factory=flex)
-    top    : LinearExpr = field(default_factory=flex)
-    width  : LinearExpr = field(default_factory=flex)
-    height : LinearExpr = field(default_factory=flex)
+    left   : Expression = field(default_factory=Flex)
+    top    : Expression = field(default_factory=Flex)
+    width  : Expression = field(default_factory=Flex)
+    height : Expression = field(default_factory=Flex)
     parent : Optional['Node'] = None
 
     def __post_init__(self):
@@ -29,11 +29,11 @@ class Node:
 
     @property
     def xcenter(self):
-        return self.left + self.width*0.5
+        return self.left + self.width/2
 
     @property
     def ycenter(self):
-        return self.top + self.height*0.5
+        return self.top + self.height/2
 
     def orient_x(self, ancestor, x):
         if self == ancestor:
@@ -168,7 +168,7 @@ def matcher(hashed, pattern):
 class Number(Expression):
     value : float
     def eval(self, env, root):
-        return self.value
+        return Constant(int(self.value))
 
     def shift(self, f):
         return self
@@ -233,7 +233,7 @@ class Dim(Declaration):
     slack : bool = False
 
     def resolve(self, system, env, root):
-        x = slack() if self.slack else flex()
+        x = Slack() if self.slack else Flex()
         self.body.resolve(system, env + (x,), root)
 
 @dataclass(eq=False)
@@ -294,10 +294,10 @@ class Edge(Tile):
     def chain(self, column, system, env, root, x):
         if x is not None:
             if column:
-                system.add_constraint(les(x - root.height, 0))
+                system.add_constraint(les(x, root.height, 0))
             else:
-                system.add_constraint(les(x - root.width, 0))
-        return promote(0)
+                system.add_constraint(les(x, root.width, 0))
+        return Constant(0)
 
     def shift(self, f):
         return self
@@ -322,12 +322,12 @@ class Cell(Tile):
         if column:
             if x is not None:
                 top = node.orient_y(root, node.top)
-                system.add_constraint(eq(top - x))
+                system.add_constraint(eq(top, x))
             return node.orient_y(root, node.bottom)
         else:
             if x is not None:
                 left = node.orient_x(root, node.left)
-                system.add_constraint(eq(left - x))
+                system.add_constraint(eq(left, x))
             return node.orient_x(root, node.right)
 
     def shift(self, f):

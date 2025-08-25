@@ -1,6 +1,5 @@
 from importlib import resources
 from lark import Lark, Transformer, Tree, v_args
-import operator
 
 from .nodes import (
     Root, Some, Child, Descendant, AnyChild, First, Last, OneOf,
@@ -8,7 +7,10 @@ from .nodes import (
     Dim, Descend, Match, AtEmpty, Adjacent, Anchor, VisualFormat, Many,
     Edge, Space, Cell, Relation
 )
-from .solver import eq, le, ge, les, ges
+from .constraints import (
+    Add, Sub, Mul, Div, Neg,
+    eq, le, ge, les, ges
+)
 
 def _load_parser_():
     lark_file = resources.files(__package__).joinpath("stylesheet.lark")
@@ -195,19 +197,19 @@ class ASTBuilder(Transformer):
 
     # ---expressions---
     def add_op(self, items):
-        return Op(operator.add, items)
+        return Op(Add, items)
 
     def sub_op(self, items):
-        return Op(operator.sub, items)
+        return Op(Sub, items)
 
     def mul_op(self, items):
-        return Op(operator.mul, items)
+        return Op(Mul, items)
 
     def div_op(self, items):
-        return Op(operator.truediv, items)
+        return Op(Div, items)
 
     def neg(self, items):
-        return Op(operator.neg, items)
+        return Op(Neg, items)
 
     @v_args(inline=True)
     def number(self, text):
@@ -244,9 +246,9 @@ class ASTBuilder(Transformer):
         lhs = lhs.shift(f)
         rhs = rhs.shift(f)
         if s is not None:
-            return self.wrap(Anchor(relfn, [Op(operator.sub, [lhs, rhs]), int(s)]))
+            return self.wrap(Anchor(relfn, [lhs, rhs, int(s)]))
         else:
-            return self.wrap(Anchor(relfn, [Op(operator.sub, [lhs, rhs])]))
+            return self.wrap(Anchor(relfn, [lhs, rhs]))
 
     # ---relation---
     @v_args(inline=True)
