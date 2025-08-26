@@ -14,6 +14,7 @@ class Node:
     width  : LinearExpr = field(default_factory=flex)
     height : LinearExpr = field(default_factory=flex)
     parent : Optional['Node'] = None
+    nudgeteer : Optional[Any] = None
 
     def __post_init__(self):
         for child in self.children:

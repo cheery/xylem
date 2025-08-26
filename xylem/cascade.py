@@ -10,6 +10,7 @@ class System:
         self.connected = ConnectedVariables()
         self.layout_modules = default_layouts if layout_modules is None else layout_modules
         self.layouts = {}
+        self.nudgets = set()
 
     def add_constraint(self, constraint):
         group = self.connected.get(constraint.marker)
@@ -25,6 +26,18 @@ class System:
             layout_name, = args
             self.layouts[root] = self.layout_modules[layout_name]
 
+    def add_node(self, node):
+        if node.nudgeteer is not None:
+            self.nudgets.add(node)
+        for child in node.children:
+            self.add_node(child)
+
+    def solvers(self):
+        for node, mod in self.layouts.items():
+            yield mod(node)
+        for node in self.nudgets:
+            yield node.nudgeteer(node)
+
     def results(self):
         systems = {}
         graph = {}
@@ -39,8 +52,8 @@ class System:
             graph[group] = set()
             marks[group] = set()
             covers[group] = group.cover
-        for node, mod in self.layouts.items():
-            g = mod(node)
+        
+        for g in self.solvers():
             consumes, produces = g.details()
             gconsumes = set(self.connected.get(x) for x in consumes)
             gproduces = set(self.connected.get(x) for x in produces)
@@ -82,61 +95,6 @@ class System:
             while notdone:
                 notdone, new = solver_step(fixed)
                 fixed.update(new)
-
-            #fixed_comp = {x: fixed[x] for g in comp for x in marks[g] if x in fixed}
-            #def has_grip(xs):
-            #    grip = True
-            #    for g in comp:
-            #        if not isinstance(g, Group):
-            #            grip &= all(x in xs for x in marks[g])
-            #    return grip
-            #def bracketed_fixed_point(var, lo, hi, solver_step, xs, tol, max_iter=50):
-            #    for _ in range(max_iter):
-            #        mid = 0.5*(lo+hi)
-            #        trial = solver_step(xs | {var: mid})
-            #        fmid = trial[var] - mid
-            #        if abs(fmid) < tol:
-            #            return trial[var]
-            #        if fmid > 0:
-            #            lo = mid
-            #        else:
-            #            hi = mid
-            #    print("panicking")
-            #    return 0.5*(lo+hi)
-            #feedback = set.union(*(covers[g] for g in comp))
-            #feedback &= set.union(*(marks[g] for g in comp))
-            #for _ in range(10):
-            #    good = False
-            #    lo_bound = fixed_comp.copy()
-            #    hi_bound = fixed_comp.copy()
-            #    for _ in range(100):
-            #        old = fixed_comp.copy()
-            #        # raw update pass
-            #        new = solver_step(old)
-            #        # apply relaxation uniformly
-            #        for k, v in new.items():
-            #            fixed_comp[k] = a*v + (1-a)*old.get(k, v)
-            #            lo_bound[k] = min(lo_bound.get(k,v), v)
-            #            hi_bound[k] = max(hi_bound.get(k,v), v)
-            #        # check convergence
-            #        if any(k not in old for k in new):
-            #            continue
-            #        if max((abs(fixed_comp[k] - old[k]) for k in new), default=0.0) < tol:
-            #            good = True
-            #            break
-            #    else:
-            #        print("no convergence")
-            #        for var in feedback:
-            #            lo = lo_bound[var]
-            #            hi = hi_bound[var]
-            #            print("BRACKETING", lo, hi)
-            #            val = bracketed_fixed_point(var, lo, hi, solver_step, fixed_comp, tol=tol)
-            #            fixed_comp[var] = val
-            #        fixed_comp |= solver_step(fixed_comp)
-            #    if good: break
-            #else:
-            #    print("complete failure")
-            #fixed.update(fixed_comp)
         return fixed
 
 class Group:

@@ -199,7 +199,21 @@ class System:
             _minimize_(self.Cu, self.Cv, self.O)
             self.resolve = False
 
-    def refine(self, fixed, tol=0.0):
+    def reset(self):
+        eqs = []
+        for k, v in self.fixed:
+            subs[v.var] = Constant({k: 1.0}, -v.constant)
+            if k in self.Cu:
+                eqs.append(_remove_(self.Cu, k))
+            elif k in self.Cv:
+                eqs.append(_remove_(self.Cv, k))
+        self.fixed.clear()
+        for eq in eqs:
+            _insert_equation_(self.Cu, self.Cv, eq.subs(subs))
+        _subs_(subs, self.Cu, self.Cv, self.O)
+        _dual_simplex_(self.Cu, self.Cv, self.O)
+
+    def refine(self, fixed):
         changed = False
         subs = {}
         eqs = []
@@ -210,8 +224,7 @@ class System:
                 if p != v:
                     subs[n] = self.fixed[k] - p + (v - p)
                     self.fixed[k] = LinearExpr(self.fixed[k].coeffs, v)
-                    if abs(v - p) > tol:
-                        changed = True
+                    changed = True
             else:
                 self.fixed[k] = dummy() + v
                 subs[k] = self.fixed[k]
