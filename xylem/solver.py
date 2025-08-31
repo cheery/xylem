@@ -176,6 +176,19 @@ class System:
         _insert_objective_(self.O, constraint.objective)
         self.resolve = True
 
+    def merge(self, other):
+        """
+        Precondition: self and other are disjoint.
+        Postcondition: self/other are no longer used.
+        """
+        result = System()
+        result.fixed = self.fixed | other.fixed
+        result.constraints = self.constraints | other.constraints
+        result.Cu = self.Cu | other.Cv
+        result.O = self.O | other.O
+        result.resolve = True
+        return result
+
     def discard(self, constraint):
         if constraint in self.constraints:
             _remove_objective_(self.O, constraint.objective)
