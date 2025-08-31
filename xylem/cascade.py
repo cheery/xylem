@@ -1,5 +1,5 @@
 from . import knuthplass
-from . import solver
+from . import constrainer
 
 default_layouts = {
     "knuth-plass": knuthplass.Solver
@@ -45,7 +45,7 @@ class System:
         covers = {}
         for group in self.connected.groups:
             if group.constraints:
-                sys = solver.System()
+                sys = constrainer.System()
                 for c in group.constraints:
                     sys.add(c)
                 systems[group] = sys

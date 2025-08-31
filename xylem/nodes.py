@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Union, Optional
-from .solver import LinearExpr, flex, slack, eq, les, ges, promote
-from .solver import Names
+from .constrainer import LinearExpr, flex, slack, eq, les, ges, promote
 from itertools import product
 
 @dataclass(eq=False)

@@ -8,7 +8,7 @@ from .nodes import (
     Dim, Descend, Match, AtEmpty, Adjacent, Anchor, VisualFormat, Many,
     Edge, Space, Cell, Relation
 )
-from .solver import eq, le, ge, les, ges
+from .constrainer import eq, le, ge, les, ges
 
 def _load_parser_():
     lark_file = resources.files(__package__).joinpath("stylesheet.lark")
